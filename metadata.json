@@ -1,0 +1,6 @@
+{
+  "name": "AutoFeedback PM - 车企反馈智能分类与优先级排序平台",
+  "description": "专为车企App产品经理设计的用户反馈智能多维分类、主动人工复核路由与「严重度×频次」决策优先级排序工作台。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
