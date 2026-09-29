@@ -2,6 +2,8 @@ import {
   FeedbackItem,
   FeedbackSource,
   DeviceModel,
+  VehicleModel,
+  getRandomGacHondaModel,
   IssueType,
   ModuleType,
   ReviewRoutingReason,
@@ -10,6 +12,23 @@ import {
   PipelineFilterStat,
 } from '../types/feedback';
 import { calculatePriorityScore } from './priorityScorer';
+
+// 广汽本田车型分类匹配规则 (随机匹配或根据反馈文本关键词智能提取)
+export function detectVehicleModelFromText(text: string, defaultVehicle?: VehicleModel): VehicleModel {
+  const lower = text.toLowerCase();
+  if (lower.includes('极湃1') || lower.includes('enp1') || lower.includes('e:np1')) return '极湃1 (e:NP1)';
+  if (lower.includes('极湃2') || lower.includes('enp2') || lower.includes('e:np2') || lower.includes('极湃')) return '极湃2 (e:NP2)';
+  if (lower.includes('雅阁') || lower.includes('accord')) return '雅阁 (Accord)';
+  if (lower.includes('皓影') || lower.includes('breeze')) return '皓影 (BREEZE)';
+  if (lower.includes('型格') || lower.includes('integra')) return '型格 (INTEGRA)';
+  if (lower.includes('奥德赛') || lower.includes('odyssey')) return '奥德赛 (ODYSSEY)';
+  if (lower.includes('冠道') || lower.includes('avancier')) return '冠道 (AVANCIER)';
+  if (lower.includes('飞度') || lower.includes('fit')) return '飞度 (FIT)';
+  if (lower.includes('缤智') || lower.includes('vezel')) return '缤智 (VEZEL)';
+  if (lower.includes('致在') || lower.includes('zr-v') || lower.includes('zrv')) return '致在 (ZR-V)';
+  if (lower.includes('凌派') || lower.includes('crider')) return '凌派 (CRIDER)';
+  return defaultVehicle || getRandomGacHondaModel();
+}
 
 // 常见机型识别规则
 export function detectDeviceModelFromText(text: string, defaultDevice: DeviceModel = 'iPhone 15 Pro'): DeviceModel {
@@ -156,9 +175,11 @@ export function preprocessRawFeedbacks(
 export function classifyFeedbackDeterministic(
   text: string,
   source: FeedbackSource = '应用内反馈',
-  deviceModel: DeviceModel = 'iPhone 15 Pro'
+  deviceModel: DeviceModel = 'iPhone 15 Pro',
+  vehicleModel?: VehicleModel
 ): Omit<FeedbackItem, 'id' | 'createdAt' | 'timestampMs' | 'priorityScore'> {
   const lower = text.toLowerCase();
+  const matchedVehicle = vehicleModel || detectVehicleModelFromText(text);
 
   // 1. 功能模块识别
   let module: ModuleType = '车控';
@@ -296,6 +317,7 @@ export function classifyFeedbackDeterministic(
     originalText: text,
     source,
     deviceModel,
+    vehicleModel: matchedVehicle,
     isEmergency: isEmergencySpike || issueType === '紧急待修复',
     module,
     issueType,
@@ -318,9 +340,10 @@ export function classifyFeedbackDeterministic(
 export function createFeedbackItemFromText(
   text: string,
   source: FeedbackSource = '应用内反馈',
-  deviceModel: DeviceModel = 'iPhone 15 Pro'
+  deviceModel: DeviceModel = 'iPhone 15 Pro',
+  vehicleModel?: VehicleModel
 ): FeedbackItem {
-  const classified = classifyFeedbackDeterministic(text, source, deviceModel);
+  const classified = classifyFeedbackDeterministic(text, source, deviceModel, vehicleModel);
   const id = `FB-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 899 + 100)}`;
   const now = new Date();
   const createdAt = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;

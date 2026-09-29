@@ -6,7 +6,9 @@ import {
   SentimentLevel,
   FeedbackSource,
   ReviewRoutingReason,
+  VehicleModel,
 } from '../../types/feedback';
+import { Car } from 'lucide-react';
 
 export const ModuleBadge: React.FC<{ module: ModuleType; size?: 'sm' | 'md' }> = ({
   module,
@@ -74,6 +76,40 @@ export const DeviceBadge: React.FC<{ model: string; size?: 'sm' | 'md' }> = ({
   return (
     <span className={`inline-flex items-center font-mono rounded border ${tagStyle} ${sizeClass}`}>
       📱 {model}
+    </span>
+  );
+};
+
+export const VehicleBadge: React.FC<{ model?: VehicleModel | string; size?: 'sm' | 'md' }> = ({
+  model = '雅阁 (Accord)',
+  size = 'sm',
+}) => {
+  const sizeClass = size === 'sm' ? 'px-2 py-0.5 text-[11px]' : 'px-2.5 py-1 text-xs font-semibold';
+  
+  // 广汽本田车型个性化色系：
+  // 极湃系列(纯电/新能源: 蓝绿色系)
+  // 雅阁/皓影 (主力中高级旗舰: 靛蓝/青色系)
+  // 型格/飞度 (年轻运动: 紫罗兰/琥珀色系)
+  // 奥德赛/冠道 (豪华大空间: 墨蓝/深灰蓝)
+  let tagStyle = 'bg-blue-50 text-blue-800 border-blue-200';
+  if (model.includes('极湃')) {
+    tagStyle = 'bg-teal-50 text-teal-800 border-teal-200';
+  } else if (model.includes('雅阁')) {
+    tagStyle = 'bg-indigo-50 text-indigo-800 border-indigo-200';
+  } else if (model.includes('皓影')) {
+    tagStyle = 'bg-cyan-50 text-cyan-800 border-cyan-200';
+  } else if (model.includes('型格')) {
+    tagStyle = 'bg-purple-50 text-purple-800 border-purple-200';
+  } else if (model.includes('飞度')) {
+    tagStyle = 'bg-amber-50 text-amber-800 border-amber-200';
+  } else if (model.includes('奥德赛') || model.includes('冠道')) {
+    tagStyle = 'bg-slate-100 text-slate-800 border-slate-300';
+  }
+
+  return (
+    <span className={`inline-flex items-center gap-1 font-sans rounded-md border shadow-2xs ${tagStyle} ${sizeClass}`}>
+      <Car className="w-3 h-3 text-slate-500 shrink-0" />
+      <span>{model}</span>
     </span>
   );
 };

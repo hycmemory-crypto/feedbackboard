@@ -6,6 +6,8 @@ import {
   IssueType,
   SeverityLevel,
   SentimentLevel,
+  VehicleModel,
+  getRandomGacHondaModel,
   CorrectionRecord,
 } from './types/feedback';
 import { INITIAL_FEEDBACKS } from './data/mockFeedbacks';
@@ -18,7 +20,7 @@ import { PriorityView } from './components/PriorityView';
 import { IngestionView } from './components/IngestionView';
 import { JiraExportModal } from './components/JiraExportModal';
 
-const FEEDBACKS_STORAGE_KEY = 'autofeedback_items_v1';
+const FEEDBACKS_STORAGE_KEY = 'autofeedback_items_v2';
 
 export default function App() {
   // Main Data States
@@ -28,11 +30,20 @@ export default function App() {
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((item: any) => ({
-            ...item,
-            deviceModel: item.deviceModel || 'iPhone 15 Pro',
-            isEmergency: item.isEmergency ?? (item.issueType === '紧急待修复'),
-          }));
+          return parsed.map((item: any) => {
+            const initialItem = INITIAL_FEEDBACKS.find((i) => i.id === item.id);
+            const isOpt = item.isOptimized ?? initialItem?.isOptimized ?? false;
+            return {
+              ...item,
+              deviceModel: item.deviceModel || 'iPhone 15 Pro',
+              vehicleModel: item.vehicleModel || initialItem?.vehicleModel || getRandomGacHondaModel(),
+              isEmergency: isOpt ? false : (item.isEmergency ?? (item.issueType === '紧急待修复')),
+              isOptimized: isOpt,
+              optimizedAt: item.optimizedAt || initialItem?.optimizedAt,
+              optimizedTimestampMs: item.optimizedTimestampMs || initialItem?.optimizedTimestampMs,
+              optimizedNotes: item.optimizedNotes || initialItem?.optimizedNotes,
+            };
+          });
         }
       }
     } catch (e) {
@@ -57,6 +68,7 @@ export default function App() {
     sentiment: '全部',
     source: '全部',
     deviceModel: '全部',
+    vehicleModel: '全部',
     onlyEmergency: false,
     reviewStatus: '全部',
     search: '',
@@ -99,6 +111,7 @@ export default function App() {
       sentiment: '全部',
       source: '全部',
       deviceModel: '全部',
+      vehicleModel: '全部',
       onlyEmergency: false,
       reviewStatus: '全部',
       search: '',
@@ -115,6 +128,7 @@ export default function App() {
       sentiment: '全部',
       source: '全部',
       deviceModel: '全部',
+      vehicleModel: '全部',
       onlyEmergency: false,
       reviewStatus: '待复核',
       search: '',
@@ -275,10 +289,60 @@ export default function App() {
     );
   };
 
-  // Emergency count calculation
+  // Emergency count calculation: 只统计尚未被优化闭环的真实紧急项
   const emergencyCount = feedbacks.filter(
-    (f) => f.isEmergency || f.issueType === '紧急待修复'
+    (f) => !f.isOptimized && (f.isEmergency || f.issueType === '紧急待修复')
   ).length;
+
+  // 需求：标记已优化 / 取消已优化
+  // 核心逻辑：点击已优化后，该需求的各种紧急处理等状态都应该清除，在列表中自动沉底，颜色变弱减少视觉冲击感
+  const handleToggleOptimized = (id: string, notes?: string) => {
+    setFeedbacks((prev) => {
+      const updated = prev.map((item) => {
+        if (item.id !== id) return item;
+        const willBeOptimized = !item.isOptimized;
+        const now = new Date();
+        const nowStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        
+        if (willBeOptimized) {
+          // 清除各种紧急处理等状态
+          const cleanedIssueType: IssueType = item.issueType === '紧急待修复' ? 'Bug' : item.issueType;
+          return {
+            ...item,
+            isOptimized: true,
+            isEmergency: false, // 紧急处理状态彻底清除
+            issueType: cleanedIssueType,
+            needsReview: false, // 紧急复核路由解除
+            reviewReason: (item.reviewReason === 'emergency_spike' || item.reviewReason === 'blocker_safety') ? 'none' : item.reviewReason,
+            reviewStatus: item.reviewStatus === 'pending' ? 'confirmed' : item.reviewStatus,
+            clusterKey: `${item.module}-${cleanedIssueType}`,
+            optimizedAt: item.optimizedAt || nowStr,
+            optimizedTimestampMs: item.optimizedTimestampMs || Date.now(),
+            optimizedNotes: notes || item.optimizedNotes || '已在近期研发版本中优化闭环并发布上线',
+          };
+        } else {
+          return {
+            ...item,
+            isOptimized: false,
+            optimizedAt: undefined,
+            optimizedTimestampMs: undefined,
+            optimizedNotes: undefined,
+          };
+        }
+      });
+
+      // 重新计算分数：已优化项目按正常权重重新核算
+      const scored = computeAllPriorityScores(updated);
+
+      // 自动沉底逻辑：未优化在最前，已优化项自动沉到底部
+      return [...scored].sort((a, b) => {
+        const aOpt = !!a.isOptimized;
+        const bOpt = !!b.isOptimized;
+        if (aOpt !== bOpt) return aOpt ? 1 : -1;
+        return 0;
+      });
+    });
+  };
 
   // Reset to factory sample
   const handleResetData = () => {
@@ -316,6 +380,7 @@ export default function App() {
               setCurrentTab('worklist');
             }}
             onJumpToReview={handleJumpToReview}
+            onToggleOptimized={handleToggleOptimized}
           />
         )}
 
@@ -346,6 +411,7 @@ export default function App() {
               setJiraExportItems(items);
               setIsJiraModalOpen(true);
             }}
+            onToggleOptimized={handleToggleOptimized}
           />
         )}
 

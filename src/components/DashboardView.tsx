@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   FeedbackItem,
   ModuleType,
@@ -8,6 +8,7 @@ import {
   ModuleBadge,
   SeverityBadge,
   DeviceBadge,
+  IssueTypeBadge,
 } from './common/Badges';
 import {
   Inbox,
@@ -20,6 +21,12 @@ import {
   Zap,
   Flame,
   Smartphone,
+  Search,
+  Award,
+  Calendar,
+  History,
+  Check,
+  RotateCcw,
 } from 'lucide-react';
 
 interface DashboardViewProps {
@@ -27,6 +34,7 @@ interface DashboardViewProps {
   onSelectCluster: (clusterKey: string) => void;
   onNavigateToWorklist: (filter?: any) => void;
   onJumpToReview: () => void;
+  onToggleOptimized?: (id: string, notes?: string) => void;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -34,13 +42,42 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onSelectCluster,
   onNavigateToWorklist,
   onJumpToReview,
+  onToggleOptimized,
 }) => {
+  // 近30天已优化需求筛选状态
+  const [optModuleFilter, setOptModuleFilter] = useState<ModuleType | '全部'>('全部');
+  const [optSearch, setOptSearch] = useState<string>('');
+
   // 1. 顶部指标计算
   const totalCount = feedbacks.length;
   const emergencyCount = feedbacks.filter((f) => f.isEmergency || f.issueType === '紧急待修复').length;
   const pendingReviewCount = feedbacks.filter((f) => f.needsReview && f.reviewStatus === 'pending').length;
   const confirmedCount = feedbacks.filter((f) => f.reviewStatus === 'confirmed' || f.reviewStatus === 'modified').length;
   const blockerCount = feedbacks.filter((f) => f.severity === '阻断').length;
+
+  // 近30天已优化需求计算 (30天内标记为已优化的需求内容)
+  const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+  const thirtyDaysAgo = Date.now() - thirtyDaysMs;
+  const optimizedRecent30Days = feedbacks
+    .filter((f) => f.isOptimized && (!f.optimizedTimestampMs || f.optimizedTimestampMs >= thirtyDaysAgo))
+    .sort((a, b) => (b.optimizedTimestampMs || 0) - (a.optimizedTimestampMs || 0));
+
+  const optimizedCount30Days = optimizedRecent30Days.length;
+
+  // 筛选后的已优化需求列表
+  const filteredOptimizedList = optimizedRecent30Days.filter((item) => {
+    if (optModuleFilter !== '全部' && item.module !== optModuleFilter) return false;
+    if (optSearch.trim()) {
+      const q = optSearch.toLowerCase();
+      return (
+        item.originalText.toLowerCase().includes(q) ||
+        item.symptomSummary.toLowerCase().includes(q) ||
+        (item.optimizedNotes && item.optimizedNotes.toLowerCase().includes(q)) ||
+        item.deviceModel.toLowerCase().includes(q)
+      );
+    }
+    return true;
+  });
 
   // 2. 模块分布统计
   const moduleCounts: Record<ModuleType, number> = {
@@ -171,7 +208,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       )}
 
       {/* 顶部数字指标卡 (Top Metric Cards) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3.5">
         {/* Total Feedback */}
         <div
           onClick={() => onNavigateToWorklist({ reviewStatus: '全部' })}
@@ -222,6 +259,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <span>突发Bug / 闪退卡死</span>
             <span className="text-rose-600 font-bold group-hover:underline flex items-center gap-0.5">
               立即排期 <ArrowRight className="w-3 h-3" />
+            </span>
+          </p>
+        </div>
+
+        {/* 近30天已优化需求指标卡 (User Request 4) */}
+        <div
+          onClick={() => {
+            const el = document.getElementById('optimized-demands-section');
+            if (el) el.scrollIntoView({ behavior: 'smooth' });
+          }}
+          className={`bg-white rounded-xl border p-4 shadow-xs transition-all cursor-pointer group relative overflow-hidden ${
+            optimizedCount30Days > 0
+              ? 'border-emerald-300 bg-emerald-50/30 hover:border-emerald-500'
+              : 'border-slate-200'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">近30天已优化需求</span>
+            <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center group-hover:scale-105 transition-transform">
+              <CheckCircle2 className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="mt-2.5 flex items-baseline gap-2">
+            <span className="text-2xl font-bold text-emerald-700">{optimizedCount30Days}</span>
+            <span className="text-xs font-semibold text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded-full">
+              闭环交付
+            </span>
+          </div>
+          <p className="mt-1 text-[11px] text-emerald-700/80 flex items-center justify-between">
+            <span>产研排期已上线</span>
+            <span className="text-emerald-700 font-bold group-hover:underline flex items-center gap-0.5">
+              查看成果 <ArrowRight className="w-3 h-3" />
             </span>
           </p>
         </div>
@@ -440,6 +509,158 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </p>
           </div>
         </div>
+      </div>
+
+      {/* ✨ 需求4：近30天标记为已优化的需求内容看板 (Recent 30 Days Resolved & Optimized Demands) */}
+      <div id="optimized-demands-section" className="bg-white rounded-xl border border-emerald-300/80 p-5 shadow-xs space-y-4">
+        {/* Section Header */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-emerald-100">
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 shadow-2xs">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+              </span>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-bold text-slate-900 text-base">
+                    近30天标记为已优化的需求内容
+                  </h3>
+                  <span className="px-2.5 py-0.5 text-xs font-bold bg-emerald-100 text-emerald-800 rounded-full border border-emerald-300">
+                    已归档 {optimizedRecent30Days.length} 项
+                  </span>
+                  {optimizedRecent30Days.filter((i) => i.isEmergency || i.severity === '阻断').length > 0 && (
+                    <span className="px-2 py-0.5 text-xs font-semibold bg-rose-50 text-rose-700 rounded-full border border-rose-200 flex items-center gap-1">
+                      <Flame className="w-3 h-3 text-rose-600" />
+                      含紧急/阻断级修复 {optimizedRecent30Days.filter((i) => i.isEmergency || i.severity === '阻断').length} 项
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  自动记录并保存近30天内在<strong>「研发周会决策列表」</strong>被 PM 标记为「已优化」的真实上线车主痛点与闭环交付成果
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Module Filter & Search in Section */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={optSearch}
+                onChange={(e) => setOptSearch(e.target.value)}
+                placeholder="搜索已优化内容/机型..."
+                className="pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 w-44 sm:w-52"
+              />
+            </div>
+
+            {/* Module Filter dropdown */}
+            <select
+              value={optModuleFilter}
+              onChange={(e) => setOptModuleFilter(e.target.value as any)}
+              className="px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+            >
+              <option value="全部">全部模块 ({optimizedRecent30Days.length})</option>
+              {(['车控', '充电', '导航', '账号', '商城', '社区'] as ModuleType[]).map((mod) => {
+                const count = optimizedRecent30Days.filter((i) => i.module === mod).length;
+                return (
+                  <option key={mod} value={mod}>
+                    {mod} ({count})
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        </div>
+
+        {/* Content: List of Optimized Cards */}
+        {filteredOptimizedList.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-1">
+            {filteredOptimizedList.map((item) => (
+              <div
+                key={item.id}
+                className="bg-gradient-to-br from-emerald-50/40 via-white to-white rounded-xl border border-emerald-200 p-4 shadow-2xs hover:shadow-xs hover:border-emerald-400 transition-all flex flex-col justify-between"
+              >
+                <div>
+                  <div className="flex items-center justify-between gap-1.5 mb-2 flex-wrap">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <ModuleBadge module={item.module} size="sm" />
+                      <IssueTypeBadge type={item.issueType} />
+                      <SeverityBadge severity={item.severity} />
+                      <DeviceBadge model={item.deviceModel} size="sm" />
+                    </div>
+                    <span className="px-2 py-0.5 text-[10px] font-bold text-emerald-800 bg-emerald-100 rounded-full border border-emerald-300 flex items-center gap-1">
+                      <Check className="w-3 h-3 text-emerald-600" />
+                      {item.optimizedAt ? item.optimizedAt.slice(0, 10) : '近30天'}
+                    </span>
+                  </div>
+
+                  <h4 className="text-xs sm:text-sm font-bold text-slate-900 leading-snug line-clamp-2">
+                    {item.originalText}
+                  </h4>
+
+                  <p className="mt-2 text-xs text-slate-600 line-clamp-2 bg-slate-50/90 p-2 rounded-lg border border-slate-100">
+                    <strong className="text-slate-700">车主处境与症状：</strong> {item.symptomSummary}
+                  </p>
+                </div>
+
+                <div className="mt-3 pt-2.5 border-t border-slate-100 text-xs flex flex-col gap-2">
+                  <div className="flex items-center justify-between text-[11px] text-slate-500">
+                    <span>来源: {item.source}</span>
+                    <span className="font-mono text-emerald-800 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200/60">
+                      历史优先级分: {item.priorityScore}
+                    </span>
+                  </div>
+
+                  {item.optimizedNotes && (
+                    <div className="text-[11px] text-emerald-800 bg-emerald-50/90 p-2 rounded-lg border border-emerald-200/80 leading-relaxed">
+                      <span className="font-bold">优化版本说明: </span>
+                      {item.optimizedNotes}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between pt-1">
+                    <button
+                      onClick={() => onNavigateToWorklist({ search: item.originalText.slice(0, 8) })}
+                      className="text-[11px] text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>在分类列表溯源</span>
+                      <ArrowRight className="w-3 h-3" />
+                    </button>
+
+                    {onToggleOptimized && (
+                      <button
+                        onClick={() => onToggleOptimized(item.id)}
+                        className="text-[11px] text-slate-400 hover:text-red-600 font-medium flex items-center gap-1 cursor-pointer"
+                        title="误标记可撤销优化状态"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>撤销标记</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="p-8 text-center bg-slate-50/60 rounded-xl border border-dashed border-slate-200 space-y-2">
+            <div className="w-12 h-12 mx-auto bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center">
+              <CheckCircle2 className="w-6 h-6" />
+            </div>
+            <h4 className="text-sm font-bold text-slate-700">近30天暂无匹配的已优化需求</h4>
+            <p className="text-xs text-slate-500 max-w-md mx-auto">
+              在「研发决策」页面，当产研团队在排序后优先级列表中将某个排期项点击「已优化」后，系统将自动保存并归档展示在此看板中。
+            </p>
+            <button
+              onClick={() => onSelectCluster('全部')}
+              className="mt-2 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-semibold hover:bg-emerald-700 shadow-2xs cursor-pointer"
+            >
+              前往研发周会决策列表
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Bottom Section: Top 5 High-Frequency Clusters */}

@@ -8,6 +8,38 @@ export type SentimentLevel = '强烈负面' | '负面' | '中性' | '正面';
 
 export type FeedbackSource = 'App Store' | '客服工单' | '应用内反馈' | '社群';
 
+// 广汽本田车型分类
+export type VehicleModel =
+  | '雅阁 (Accord)'
+  | '皓影 (BREEZE)'
+  | '型格 (INTEGRA)'
+  | '奥德赛 (ODYSSEY)'
+  | '冠道 (AVANCIER)'
+  | '飞度 (FIT)'
+  | '缤智 (VEZEL)'
+  | '致在 (ZR-V)'
+  | '凌派 (CRIDER)'
+  | '极湃1 (e:NP1)'
+  | '极湃2 (e:NP2)';
+
+export const GAC_HONDA_MODELS: VehicleModel[] = [
+  '雅阁 (Accord)',
+  '皓影 (BREEZE)',
+  '型格 (INTEGRA)',
+  '奥德赛 (ODYSSEY)',
+  '冠道 (AVANCIER)',
+  '飞度 (FIT)',
+  '缤智 (VEZEL)',
+  '致在 (ZR-V)',
+  '凌派 (CRIDER)',
+  '极湃1 (e:NP1)',
+  '极湃2 (e:NP2)',
+];
+
+export function getRandomGacHondaModel(): VehicleModel {
+  return GAC_HONDA_MODELS[Math.floor(Math.random() * GAC_HONDA_MODELS.length)];
+}
+
 export type DeviceModel =
   | 'iPhone 16 Pro Max'
   | 'iPhone 15 Pro'
@@ -34,6 +66,7 @@ export interface TagRecord {
   severity: SeverityLevel;
   sentiment: SentimentLevel;
   deviceModel?: DeviceModel;
+  vehicleModel?: VehicleModel;
   symptomSummary?: string;
 }
 
@@ -43,6 +76,7 @@ export interface FeedbackItem {
   cleanedText: string;
   source: FeedbackSource;
   deviceModel: DeviceModel; // 模块一：手机/客户端机型
+  vehicleModel: VehicleModel; // 广汽本田车型分类 (雅阁、皓影、型格等)
   isEmergency?: boolean;    // 是否为突发性/紧急待修复需求
   createdAt: string;
   timestampMs: number;
@@ -67,12 +101,16 @@ export interface FeedbackItem {
   originalTags?: TagRecord;
   correctedAt?: number;
   
-  // Priority decision
+  // Priority decision & Optimization tracking
   inPriorityList: boolean;
   priorityScore: number;
   priorityRank?: number;
   manualRankAdjusted?: boolean;
-  
+  isOptimized?: boolean;         // 标记此项已优化
+  optimizedAt?: string;          // 优化完成时间字符串
+  optimizedTimestampMs?: number; // 优化时间戳 (用于近30天统计)
+  optimizedNotes?: string;       // 优化版本说明/备注
+
   // Cluster info
   clusterKey: string;      // e.g. "充电-Bug"
 }
@@ -111,6 +149,7 @@ export interface FilterState {
   sentiment: SentimentLevel | '全部';
   source: FeedbackSource | '全部';
   deviceModel: DeviceModel | '全部';
+  vehicleModel?: VehicleModel | '全部'; // 广汽本田车型筛选
   reviewStatus: '全部' | '待复核' | '已确认' | '已修正';
   search: string;
   onlyPriority: boolean;

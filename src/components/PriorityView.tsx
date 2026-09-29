@@ -9,6 +9,7 @@ import {
   SeverityBadge,
   SentimentBadge,
   DeviceBadge,
+  VehicleBadge,
 } from './common/Badges';
 import {
   GripVertical,
@@ -31,16 +32,18 @@ interface PriorityViewProps {
   feedbacks: FeedbackItem[];
   onReorderPriorityList: (reordered: FeedbackItem[]) => void;
   onOpenJiraExport: (items: FeedbackItem[]) => void;
+  onToggleOptimized?: (id: string, notes?: string) => void;
 }
 
 export const PriorityView: React.FC<PriorityViewProps> = ({
   feedbacks,
   onReorderPriorityList,
   onOpenJiraExport,
+  onToggleOptimized,
 }) => {
-  // Filter for priority items or high/blocker items or emergency
+  // Filter for priority items or high/blocker items or emergency or already optimized
   const priorityCandidates = useMemo(() => {
-    return feedbacks.filter((f) => f.inPriorityList || f.severity === '阻断' || f.severity === '高' || f.isEmergency || f.issueType === '紧急待修复');
+    return feedbacks.filter((f) => f.inPriorityList || f.severity === '阻断' || f.severity === '高' || f.isEmergency || f.issueType === '紧急待修复' || f.isOptimized);
   }, [feedbacks]);
 
   // Priority list items (can be manually reordered)
@@ -50,14 +53,23 @@ export const PriorityView: React.FC<PriorityViewProps> = ({
   const [feedbackFeedbackPrompt, setFeedbackFeedbackPrompt] = useState(false);
   const [selectedClusterFilter, setSelectedClusterFilter] = useState<string | null>(null);
   const [onlyShowEmergency, setOnlyShowEmergency] = useState(false);
+  const [optimizationFilter, setOptimizationFilter] = useState<'全部' | '待优化' | '已优化'>('全部');
 
-  // Initialize sorted items: Emergency items placed first, followed by priority score
+  // Initialize sorted items: Emergency items placed first, followed by priority score, while optimized items sink to bottom
   React.useEffect(() => {
     const sorted = [...priorityCandidates].sort((a, b) => {
-      const aEmerg = a.isEmergency || a.issueType === '紧急待修复';
-      const bEmerg = b.isEmergency || b.issueType === '紧急待修复';
+      // 1. 已优化项自动沉底
+      const aOpt = !!a.isOptimized;
+      const bOpt = !!b.isOptimized;
+      if (aOpt !== bOpt) return aOpt ? 1 : -1;
+
+      // 2. 突发紧急待修复置顶 (仅未优化项)
+      const aEmerg = !aOpt && (a.isEmergency || a.issueType === '紧急待修复');
+      const bEmerg = !bOpt && (b.isEmergency || b.issueType === '紧急待修复');
       if (aEmerg && !bEmerg) return -1;
       if (!aEmerg && bEmerg) return 1;
+
+      // 3. 优先级分从高到低
       return b.priorityScore - a.priorityScore;
     });
     setPriorityItems(sorted);
@@ -97,7 +109,9 @@ export const PriorityView: React.FC<PriorityViewProps> = ({
       }
       map[key].count++;
       if (item.severity === '阻断') map[key].blockerCount++;
-      if (item.isEmergency || item.issueType === '紧急待修复') map[key].emergencyCount++;
+      if (!item.isOptimized && (item.isEmergency || item.issueType === '紧急待修复')) {
+        map[key].emergencyCount++;
+      }
       if (item.severity === '高') map[key].highCount++;
       map[key].avgScore += item.priorityScore;
       if (item.symptomSummary && !map[key].symptoms.includes(item.symptomSummary)) {
@@ -113,22 +127,80 @@ export const PriorityView: React.FC<PriorityViewProps> = ({
       .sort((a, b) => b.emergencyCount - a.emergencyCount || b.blockerCount - a.blockerCount || b.count - a.count);
   }, [feedbacks]);
 
-  // Filtered priority items based on selected cluster or emergency toggle
+  // Filtered priority items based on selected cluster, emergency toggle, and optimization filter
+  // 确保已优化项始终自动沉底
   const displayItems = useMemo(() => {
     let list = priorityItems;
     if (onlyShowEmergency) {
-      list = list.filter((i) => i.isEmergency || i.issueType === '紧急待修复');
+      list = list.filter((i) => !i.isOptimized && (i.isEmergency || i.issueType === '紧急待修复'));
     }
     if (selectedClusterFilter) {
       list = list.filter((i) => i.clusterKey === selectedClusterFilter);
     }
-    return list;
-  }, [priorityItems, selectedClusterFilter, onlyShowEmergency]);
+    if (optimizationFilter === '待优化') {
+      list = list.filter((i) => !i.isOptimized);
+    } else if (optimizationFilter === '已优化') {
+      list = list.filter((i) => !!i.isOptimized);
+    }
 
-  // Emergency items count
+    // 核心需求：在列表中自动沉底
+    return [...list].sort((a, b) => {
+      const aOpt = !!a.isOptimized;
+      const bOpt = !!b.isOptimized;
+      if (aOpt !== bOpt) return aOpt ? 1 : -1;
+      return 0;
+    });
+  }, [priorityItems, selectedClusterFilter, onlyShowEmergency, optimizationFilter]);
+
+  const optimizedCount = useMemo(
+    () => priorityItems.filter((i) => i.isOptimized).length,
+    [priorityItems]
+  );
+  const pendingOptimizedCount = useMemo(
+    () => priorityItems.filter((i) => !i.isOptimized).length,
+    [priorityItems]
+  );
+
+  // Emergency items count (只包含尚未优化的紧急需求)
   const emergencyItems = useMemo(() => {
-    return priorityItems.filter((i) => i.isEmergency || i.issueType === '紧急待修复');
+    return priorityItems.filter((i) => !i.isOptimized && (i.isEmergency || i.issueType === '紧急待修复'));
   }, [priorityItems]);
+
+  // 点击已优化按钮：清除紧急状态并沉底
+  const handleItemToggleOptimized = (id: string) => {
+    onToggleOptimized?.(id);
+    setPriorityItems((prev) => {
+      const updated = prev.map((item) => {
+        if (item.id !== id) return item;
+        const willBeOptimized = !item.isOptimized;
+        const now = new Date();
+        const nowStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        return {
+          ...item,
+          isOptimized: willBeOptimized,
+          isEmergency: willBeOptimized ? false : item.isEmergency,
+          issueType: willBeOptimized && item.issueType === '紧急待修复' ? 'Bug' : item.issueType,
+          needsReview: willBeOptimized ? false : item.needsReview,
+          reviewReason: willBeOptimized ? ('none' as const) : item.reviewReason,
+          optimizedAt: willBeOptimized ? (item.optimizedAt || nowStr) : undefined,
+          optimizedTimestampMs: willBeOptimized ? (item.optimizedTimestampMs || Date.now()) : undefined,
+          optimizedNotes: willBeOptimized ? (item.optimizedNotes || '已在近期研发版本中优化闭环并发布上线') : undefined,
+        };
+      });
+
+      // 列表中自动沉底
+      return [...updated].sort((a, b) => {
+        const aOpt = !!a.isOptimized;
+        const bOpt = !!b.isOptimized;
+        if (aOpt !== bOpt) return aOpt ? 1 : -1;
+        const aEmerg = !aOpt && (a.isEmergency || a.issueType === '紧急待修复');
+        const bEmerg = !bOpt && (b.isEmergency || b.issueType === '紧急待修复');
+        if (aEmerg && !bEmerg) return -1;
+        if (!aEmerg && bEmerg) return 1;
+        return b.priorityScore - a.priorityScore;
+      });
+    });
+  };
 
   // Drag and Drop handlers
   const handleDragStart = (index: number) => {
@@ -250,11 +322,14 @@ export const PriorityView: React.FC<PriorityViewProps> = ({
                 className="bg-white rounded-xl border border-red-200 p-3.5 shadow-xs flex flex-col justify-between hover:border-red-400 transition-colors"
               >
                 <div>
-                  <div className="flex items-center justify-between mb-1.5">
+                  <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
                     <span className="px-2 py-0.5 text-[10px] font-extrabold bg-red-600 text-white rounded uppercase tracking-wider">
                       🚨 紧急待修复
                     </span>
-                    <DeviceBadge model={item.deviceModel} size="sm" />
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <VehicleBadge model={item.vehicleModel} size="sm" />
+                      <DeviceBadge model={item.deviceModel} size="sm" />
+                    </div>
                   </div>
                   <h4 className="font-bold text-slate-900 text-xs sm:text-sm line-clamp-2 leading-snug">
                     {item.originalText}
@@ -268,6 +343,25 @@ export const PriorityView: React.FC<PriorityViewProps> = ({
                   <span className="font-mono font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded">
                     优先级分: {item.priorityScore}
                   </span>
+                </div>
+                <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
+                  <span className="text-[10px] text-slate-400">
+                    {item.isOptimized ? '已完成紧急热更闭环' : '研发待排期'}
+                  </span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleItemToggleOptimized(item.id);
+                    }}
+                    className={`px-2 py-0.5 text-xs font-bold rounded-md flex items-center gap-1 transition-all cursor-pointer ${
+                      item.isOptimized
+                        ? 'bg-slate-200 text-slate-600'
+                        : 'bg-slate-100 hover:bg-emerald-100 text-slate-700 hover:text-emerald-800 border border-slate-200'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>{item.isOptimized ? '已优化' : '标记已优化'}</span>
+                  </button>
                 </div>
               </div>
             ))}
@@ -394,7 +488,7 @@ export const PriorityView: React.FC<PriorityViewProps> = ({
         <div className="lg:col-span-8 bg-white rounded-xl border border-slate-200 shadow-xs flex flex-col overflow-hidden">
           <div className="p-4 border-b border-slate-200 bg-slate-50/70 flex items-center justify-between flex-wrap gap-2">
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="font-bold text-slate-900 text-sm">
                   排序后优先级列表 ({displayItems.length} 项)
                 </h3>
@@ -410,15 +504,50 @@ export const PriorityView: React.FC<PriorityViewProps> = ({
                 )}
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                可拖拽手柄调整顺序，PM 拥有最终决策裁量权并覆盖 Agent 初始判断
+                可拖拽手柄调整顺序；点击<strong>「已优化」</strong>标记产研闭环，自动同步归档至总揽看板
               </p>
             </div>
 
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span className="flex items-center gap-1">
-                <GripVertical className="w-3.5 h-3.5 text-slate-400" />
-                支持整行拖拽
-              </span>
+            {/* Optimization Status Filter Tabs */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-slate-200 text-xs shadow-2xs">
+                <button
+                  onClick={() => setOptimizationFilter('全部')}
+                  className={`px-2.5 py-1 rounded-md font-semibold transition-all cursor-pointer ${
+                    optimizationFilter === '全部'
+                      ? 'bg-slate-900 text-white shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  全部 ({priorityItems.length})
+                </button>
+                <button
+                  onClick={() => setOptimizationFilter('待优化')}
+                  className={`px-2.5 py-1 rounded-md font-semibold transition-all cursor-pointer ${
+                    optimizationFilter === '待优化'
+                      ? 'bg-amber-600 text-white shadow-2xs'
+                      : 'text-slate-600 hover:text-amber-800'
+                  }`}
+                >
+                  待优化 ({pendingOptimizedCount})
+                </button>
+                <button
+                  onClick={() => setOptimizationFilter('已优化')}
+                  className={`px-2.5 py-1 rounded-md font-semibold transition-all flex items-center gap-1 cursor-pointer ${
+                    optimizationFilter === '已优化'
+                      ? 'bg-emerald-600 text-white shadow-2xs font-bold'
+                      : 'text-slate-600 hover:text-emerald-700'
+                  }`}
+                >
+                  <CheckCircle2 className="w-3 h-3" />
+                  已优化 ({optimizedCount})
+                </button>
+              </div>
+
+              <div className="hidden sm:flex items-center gap-1 text-xs text-slate-400">
+                <GripVertical className="w-3.5 h-3.5" />
+                <span>可拖拽</span>
+              </div>
             </div>
           </div>
 
@@ -427,6 +556,7 @@ export const PriorityView: React.FC<PriorityViewProps> = ({
             {displayItems.map((item, index) => {
               const isBlocker = item.severity === '阻断';
               const isEmergency = item.isEmergency || item.issueType === '紧急待修复';
+              const isOptimized = !!item.isOptimized;
 
               return (
                 <div
@@ -438,6 +568,8 @@ export const PriorityView: React.FC<PriorityViewProps> = ({
                   className={`p-3.5 rounded-xl border transition-all flex items-start gap-3 group ${
                     draggedIndex === index
                       ? 'opacity-40 bg-blue-50 border-dashed border-blue-400'
+                      : isOptimized
+                      ? 'border-slate-200 bg-slate-50/75 opacity-65 hover:opacity-90 grayscale-[30%] hover:grayscale-0 shadow-none'
                       : isEmergency
                       ? 'border-red-300 bg-gradient-to-r from-red-100/40 via-red-50/30 to-white shadow-xs hover:border-red-400'
                       : isBlocker
@@ -454,16 +586,18 @@ export const PriorityView: React.FC<PriorityViewProps> = ({
                       <GripVertical className="w-4 h-4" />
                     </div>
                     <span
-                      className={`w-6 h-6 rounded-lg text-xs font-bold flex items-center justify-center ${
-                        isEmergency
-                          ? 'bg-rose-600 text-white shadow-xs ring-2 ring-rose-200 animate-pulse'
+                      className={`w-6 h-6 rounded-lg text-xs flex items-center justify-center ${
+                        isOptimized
+                          ? 'bg-slate-200 text-slate-500 font-medium'
+                          : isEmergency
+                          ? 'bg-rose-600 text-white font-bold shadow-xs ring-2 ring-rose-200 animate-pulse'
                           : index === 0
-                          ? 'bg-red-600 text-white shadow-xs'
+                          ? 'bg-red-600 text-white font-bold shadow-xs'
                           : index === 1
-                          ? 'bg-orange-500 text-white'
+                          ? 'bg-orange-500 text-white font-bold'
                           : index === 2
-                          ? 'bg-amber-500 text-white'
-                          : 'bg-slate-100 text-slate-700'
+                          ? 'bg-amber-500 text-white font-bold'
+                          : 'bg-slate-100 text-slate-700 font-bold'
                       }`}
                     >
                       {index + 1}
@@ -477,25 +611,83 @@ export const PriorityView: React.FC<PriorityViewProps> = ({
                       <IssueTypeBadge type={item.issueType} />
                       <SeverityBadge severity={item.severity} />
                       <SentimentBadge sentiment={item.sentiment} />
+                      <VehicleBadge model={item.vehicleModel} />
                       <DeviceBadge model={item.deviceModel} />
 
-                      {/* Formula / Score Breakdown Pill */}
-                      <span className="ml-auto font-mono text-xs font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-md" title={`综合得分 = 严重度 × 频次 × 情绪: ${item.priorityScore}`}>
-                        评分: {item.priorityScore}
-                      </span>
+                      {isOptimized && (
+                        <span className="px-2 py-0.5 text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200 rounded-md flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          已优化
+                        </span>
+                      )}
+
+                      {/* Right Action buttons: 已优化 Button + Score */}
+                      <div className="ml-auto flex items-center gap-2">
+                        {/* 需求要求的核心优化按钮 */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleItemToggleOptimized(item.id);
+                          }}
+                          className={`px-2.5 py-1 text-xs font-semibold rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+                            isOptimized
+                              ? 'bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 shadow-none'
+                              : 'bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 border border-slate-300 hover:border-emerald-300 shadow-2xs'
+                          }`}
+                          title={isOptimized ? '已完成优化（点击可恢复）' : '点击将此需求标记为已优化'}
+                        >
+                          <CheckCircle2 className={`w-3.5 h-3.5 ${isOptimized ? 'text-emerald-600' : 'text-slate-400'}`} />
+                          <span>{isOptimized ? '已优化' : '已优化'}</span>
+                          {isOptimized && item.optimizedAt && (
+                            <span className="text-[10px] opacity-75 font-mono">
+                              ({item.optimizedAt.slice(5, 10)})
+                            </span>
+                          )}
+                        </button>
+
+                        <span
+                          className={`font-mono text-xs px-2 py-1 rounded-md border ${
+                            isOptimized
+                              ? 'text-slate-500 bg-slate-100 border-slate-200 font-normal'
+                              : 'font-bold text-slate-800 bg-slate-100 border-slate-200'
+                          }`}
+                          title={`综合得分: ${item.priorityScore}`}
+                        >
+                          评分: {item.priorityScore}
+                        </span>
+                      </div>
                     </div>
 
-                    <p className="text-xs sm:text-sm font-semibold text-slate-900 leading-snug line-clamp-2">
+                    <p className={`text-xs sm:text-sm leading-snug line-clamp-2 ${isOptimized ? 'text-slate-500 font-normal' : 'text-slate-900 font-semibold'}`}>
                       {item.originalText}
                     </p>
 
-                    <div className="mt-1.5 flex items-center justify-between text-xs text-slate-500">
-                      <span className="truncate max-w-[85%] text-slate-600">
-                        <span className="font-semibold text-slate-700">决策依据：</span>
+                    <div className="mt-1.5 flex items-center justify-between text-xs text-slate-500 flex-wrap gap-1">
+                      <span className={`truncate max-w-[85%] ${isOptimized ? 'text-slate-400' : 'text-slate-600'}`}>
+                        <span className={`font-semibold ${isOptimized ? 'text-slate-500' : 'text-slate-700'}`}>决策依据：</span>
                         {item.agentReasoning}
                       </span>
                       <span className="text-[11px] text-slate-400">来源: {item.source}</span>
                     </div>
+
+                    {/* 已优化上线备注信息展示 (视觉弱化低冲击感) */}
+                    {isOptimized && (
+                      <div className="mt-2 px-2.5 py-1 bg-slate-100/90 border border-slate-200 rounded-lg text-[11px] text-slate-500 flex items-center justify-between flex-wrap gap-1">
+                        <div className="flex items-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <span>
+                            <strong>优化归档：</strong>
+                            {item.optimizedNotes || '已在近期研发版本中优化闭环并发布'}
+                          </span>
+                        </div>
+                        {item.optimizedAt && (
+                          <span className="text-slate-400 font-mono text-[10px]">
+                            {item.optimizedAt}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Manual Arrow Move Buttons */}
