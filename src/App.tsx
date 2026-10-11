@@ -145,6 +145,7 @@ export default function App() {
       issueType: IssueType;
       severity: SeverityLevel;
       sentiment: SentimentLevel;
+      vehicleModel?: VehicleModel;
       correctionNote?: string;
     }
   ) => {
@@ -157,7 +158,8 @@ export default function App() {
         current.module !== updates.module ||
         current.issueType !== updates.issueType ||
         current.severity !== updates.severity ||
-        current.sentiment !== updates.sentiment;
+        current.sentiment !== updates.sentiment ||
+        (updates.vehicleModel && current.vehicleModel !== updates.vehicleModel);
 
       if (!hasChanged) return prev;
 
@@ -171,6 +173,7 @@ export default function App() {
           issueType: current.issueType,
           severity: current.severity,
           sentiment: current.sentiment,
+          vehicleModel: current.vehicleModel,
           symptomSummary: current.symptomSummary,
         },
         correctedTags: {
@@ -178,6 +181,7 @@ export default function App() {
           issueType: updates.issueType,
           severity: updates.severity,
           sentiment: updates.sentiment,
+          vehicleModel: updates.vehicleModel || current.vehicleModel,
           symptomSummary: current.symptomSummary,
         },
         correctedAt: Date.now(),
@@ -200,6 +204,7 @@ export default function App() {
         issueType: updates.issueType,
         severity: updates.severity,
         sentiment: updates.sentiment,
+        vehicleModel: updates.vehicleModel || current.vehicleModel,
         clusterKey: `${updates.module}-${updates.issueType}`,
         reviewStatus: 'modified',
         needsReview: false,
@@ -209,6 +214,7 @@ export default function App() {
           issueType: current.issueType,
           severity: current.severity,
           sentiment: current.sentiment,
+          vehicleModel: current.vehicleModel,
         },
         correctedAt: Date.now(),
       };
@@ -400,6 +406,7 @@ export default function App() {
             corrections={corrections}
             onToggleFewShotInjection={handleToggleFewShotInjection}
             onAddCustomCorrection={(c) => setCorrections((prev) => [c, ...prev])}
+            onToggleOptimized={handleToggleOptimized}
           />
         )}
 

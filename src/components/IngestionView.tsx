@@ -5,14 +5,18 @@ import {
   FeedbackSource,
   DeviceModel,
   PipelineFilterStat,
+  VehicleModel,
+  GAC_HONDA_MODELS,
+  getRandomGacHondaModel,
 } from '../types/feedback';
 import {
   preprocessRawFeedbacks,
   classifyFeedbackDeterministic,
+  detectVehicleModelFromText,
 } from '../utils/feedbackClassifier';
 import { calculatePriorityScore } from '../utils/priorityScorer';
 import { SAMPLE_FILTERED_SPAM } from '../data/mockFeedbacks';
-import { DeviceBadge, IssueTypeBadge, SourceBadge } from './common/Badges';
+import { DeviceBadge, IssueTypeBadge, SourceBadge, VehicleBadge } from './common/Badges';
 import {
   UploadCloud,
   FileText,
@@ -26,6 +30,7 @@ import {
   ArrowRight,
   ShieldCheck,
   Smartphone,
+  Car,
   Flame,
   FileSpreadsheet,
   FileCode,
@@ -56,6 +61,7 @@ export interface WorkspaceItem {
   text: string;
   source: FeedbackSource;
   device: DeviceModel;
+  vehicle: VehicleModel;
   isEmergency?: boolean;
 }
 
@@ -182,6 +188,7 @@ export const IngestionView: React.FC<IngestionViewProps> = ({
       text: t,
       source: '应用内反馈',
       device: t.includes('华为') ? '华为 Mate 60 Pro' : t.includes('小米') ? '小米 14 Ultra' : t.includes('iPhone') ? 'iPhone 16 Pro Max' : 'iPhone 15 Pro',
+      vehicle: detectVehicleModelFromText(t),
       isEmergency: t.includes('【突发紧急】') || t.includes('必崩') || t.includes('跳枪报错'),
     }));
   });
@@ -345,6 +352,7 @@ export const IngestionView: React.FC<IngestionViewProps> = ({
       text: lineText,
       source: inferredSource,
       device: inferredDevice,
+      vehicle: detectVehicleModelFromText(lineText),
       isEmergency: lineText.includes('【突发紧急】') || lineText.includes('必崩') || lineText.includes('跳枪报错') || lineText.includes('打不开'),
     }));
 
@@ -428,6 +436,7 @@ export const IngestionView: React.FC<IngestionViewProps> = ({
         text: t,
         source: '应用内反馈',
         device: t.includes('华为') ? '华为 Mate 60 Pro' : t.includes('小米') ? '小米 14 Ultra' : t.includes('iPhone') ? 'iPhone 16 Pro Max' : 'iPhone 15 Pro',
+        vehicle: detectVehicleModelFromText(t),
         isEmergency: t.includes('【突发紧急】') || t.includes('必崩') || t.includes('跳枪报错'),
       }))
     );
@@ -448,6 +457,10 @@ export const IngestionView: React.FC<IngestionViewProps> = ({
     setFeedbackItems((prev) => prev.map((item) => (item.id === id ? { ...item, device } : item)));
   };
 
+  const handleUpdateItemVehicle = (id: string, vehicle: VehicleModel) => {
+    setFeedbackItems((prev) => prev.map((item) => (item.id === id ? { ...item, vehicle } : item)));
+  };
+
   const handleUpdateItemSource = (id: string, source: FeedbackSource) => {
     setFeedbackItems((prev) => prev.map((item) => (item.id === id ? { ...item, source } : item)));
   };
@@ -462,6 +475,7 @@ export const IngestionView: React.FC<IngestionViewProps> = ({
       text: '',
       source: defaultSource,
       device: defaultDevice,
+      vehicle: getRandomGacHondaModel(),
       isEmergency: false,
     };
     setFeedbackItems((prev) => [...prev, newItem]);
@@ -476,6 +490,7 @@ export const IngestionView: React.FC<IngestionViewProps> = ({
       text: l,
       source: defaultSource,
       device: defaultDevice,
+      vehicle: detectVehicleModelFromText(l),
       isEmergency: l.includes('紧急') || l.includes('崩溃') || l.includes('卡死'),
     }));
     setFeedbackItems((prev) => [...prev, ...added]);
@@ -491,6 +506,7 @@ export const IngestionView: React.FC<IngestionViewProps> = ({
       text: l,
       source: defaultSource,
       device: defaultDevice,
+      vehicle: detectVehicleModelFromText(l),
       isEmergency: l.includes('【突发紧急】') || l.includes('崩溃') || l.includes('卡死'),
     }));
     setFeedbackItems(items);
@@ -525,12 +541,13 @@ export const IngestionView: React.FC<IngestionViewProps> = ({
           setStepStage(4); // Classification Agent
 
           const newItems: FeedbackItem[] = accepted.map((item, idx) => {
-            // 查找对应卡片用户是否手动指定了机型或渠道
+            // 查找对应卡片用户是否手动指定了机型、车型或渠道
             const originalCard = feedbackItems.find((fi) => fi.text.includes(item.originalText) || item.originalText.includes(fi.text));
             const itemDevice = originalCard?.device || item.deviceModel;
             const itemSource = originalCard?.source || item.source;
+            const itemVehicle = originalCard?.vehicle || detectVehicleModelFromText(item.originalText);
 
-            const classified = classifyFeedbackDeterministic(item.cleanedText, itemSource, itemDevice);
+            const classified = classifyFeedbackDeterministic(item.cleanedText, itemSource, itemDevice, itemVehicle);
             const isItemEmergency = originalCard?.isEmergency || classified.isEmergency;
 
             const scoreInfo = calculatePriorityScore(
@@ -547,6 +564,7 @@ export const IngestionView: React.FC<IngestionViewProps> = ({
               ...classified,
               source: itemSource,
               deviceModel: itemDevice,
+              vehicleModel: itemVehicle,
               isEmergency: isItemEmergency,
               issueType: isItemEmergency ? '紧急待修复' : classified.issueType,
               id: `FB-${Date.now().toString().slice(-5)}-${idx + 100}`,
@@ -586,8 +604,9 @@ export const IngestionView: React.FC<IngestionViewProps> = ({
         : null
     );
 
-    // 针对被拦截文本调用智能多维分类与打分模型
-    const classified = classifyFeedbackDeterministic(rawText, defaultSource, defaultDevice);
+    // 针对被拦截文本调用智能多维分类与打分模型 (包含广汽本田车型提取)
+    const itemVehicle = detectVehicleModelFromText(rawText);
+    const classified = classifyFeedbackDeterministic(rawText, defaultSource, defaultDevice, itemVehicle);
     const isEmerg =
       rawText.includes('紧急') ||
       rawText.includes('闪退') ||
@@ -613,6 +632,7 @@ export const IngestionView: React.FC<IngestionViewProps> = ({
       cleanedText: rawText.replace(/^[#\s\d.-]+/, '').trim(),
       source: defaultSource,
       deviceModel: defaultDevice,
+      vehicleModel: itemVehicle,
       isEmergency: isEmerg,
       issueType: isEmerg ? '紧急待修复' : classified.issueType,
       priorityScore: scoreInfo.finalScore,
@@ -636,7 +656,8 @@ export const IngestionView: React.FC<IngestionViewProps> = ({
   const handleRescueAllSpam = () => {
     if (filteredSpamList.length === 0) return;
     const itemsToAdd: FeedbackItem[] = filteredSpamList.map((spam, idx) => {
-      const classified = classifyFeedbackDeterministic(spam.text, defaultSource, defaultDevice);
+      const itemVehicle = detectVehicleModelFromText(spam.text);
+      const classified = classifyFeedbackDeterministic(spam.text, defaultSource, defaultDevice, itemVehicle);
       const isEmerg =
         spam.text.includes('紧急') ||
         spam.text.includes('闪退') ||
@@ -662,6 +683,7 @@ export const IngestionView: React.FC<IngestionViewProps> = ({
         cleanedText: spam.text.trim(),
         source: defaultSource,
         deviceModel: defaultDevice,
+        vehicleModel: itemVehicle,
         isEmergency: isEmerg,
         issueType: isEmerg ? '紧急待修复' : classified.issueType,
         priorityScore: scoreInfo.finalScore,
@@ -1039,6 +1061,20 @@ export const IngestionView: React.FC<IngestionViewProps> = ({
                               <option value="其他机型">其他机型</option>
                             </select>
 
+                            {/* GAC Honda Vehicle Selector on Card */}
+                            <select
+                              value={item.vehicle || '雅阁 (Accord)'}
+                              onChange={(e) => handleUpdateItemVehicle(item.id, e.target.value as VehicleModel)}
+                              className="px-2 py-0.5 text-xs bg-blue-50/60 border border-blue-200 text-blue-900 rounded font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              title="广汽本田车型分类"
+                            >
+                              {GAC_HONDA_MODELS.map((v) => (
+                                <option key={v} value={v}>
+                                  🚗 {v}
+                                </option>
+                              ))}
+                            </select>
+
                             {/* Source Selector on Card */}
                             <select
                               value={item.source}
@@ -1333,6 +1369,7 @@ export const IngestionView: React.FC<IngestionViewProps> = ({
                     >
                       {item.severity}
                     </span>
+                    <VehicleBadge model={item.vehicleModel} size="sm" />
                     <DeviceBadge model={item.deviceModel} size="sm" />
                     <span className="text-[11px] text-slate-400">({item.source})</span>
                   </div>

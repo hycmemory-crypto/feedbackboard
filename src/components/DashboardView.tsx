@@ -3,11 +3,14 @@ import {
   FeedbackItem,
   ModuleType,
   SeverityLevel,
+  VehicleModel,
+  GAC_HONDA_MODELS,
 } from '../types/feedback';
 import {
   ModuleBadge,
   SeverityBadge,
   DeviceBadge,
+  VehicleBadge,
   IssueTypeBadge,
 } from './common/Badges';
 import {
@@ -21,6 +24,7 @@ import {
   Zap,
   Flame,
   Smartphone,
+  Car,
   Search,
   Award,
   Calendar,
@@ -46,11 +50,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 }) => {
   // 近30天已优化需求筛选状态
   const [optModuleFilter, setOptModuleFilter] = useState<ModuleType | '全部'>('全部');
+  const [optVehicleFilter, setOptVehicleFilter] = useState<VehicleModel | '全部'>('全部');
   const [optSearch, setOptSearch] = useState<string>('');
 
   // 1. 顶部指标计算
   const totalCount = feedbacks.length;
-  const emergencyCount = feedbacks.filter((f) => f.isEmergency || f.issueType === '紧急待修复').length;
+  // 需求：已优化后紧急状态清除，紧急项只计算尚未闭环优化的真实高危项
+  const emergencyCount = feedbacks.filter((f) => !f.isOptimized && (f.isEmergency || f.issueType === '紧急待修复')).length;
   const pendingReviewCount = feedbacks.filter((f) => f.needsReview && f.reviewStatus === 'pending').length;
   const confirmedCount = feedbacks.filter((f) => f.reviewStatus === 'confirmed' || f.reviewStatus === 'modified').length;
   const blockerCount = feedbacks.filter((f) => f.severity === '阻断').length;
@@ -67,13 +73,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // 筛选后的已优化需求列表
   const filteredOptimizedList = optimizedRecent30Days.filter((item) => {
     if (optModuleFilter !== '全部' && item.module !== optModuleFilter) return false;
+    if (optVehicleFilter !== '全部' && item.vehicleModel !== optVehicleFilter) return false;
     if (optSearch.trim()) {
       const q = optSearch.toLowerCase();
       return (
         item.originalText.toLowerCase().includes(q) ||
         item.symptomSummary.toLowerCase().includes(q) ||
         (item.optimizedNotes && item.optimizedNotes.toLowerCase().includes(q)) ||
-        item.deviceModel.toLowerCase().includes(q)
+        item.deviceModel.toLowerCase().includes(q) ||
+        (item.vehicleModel && item.vehicleModel.toLowerCase().includes(q))
       );
     }
     return true;
@@ -103,13 +111,38 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     '社区': { bar: 'bg-purple-500', text: 'text-purple-600', bg: 'bg-purple-50' },
   };
 
-  // 3. 手机机型分布统计
+  // 3. 广汽本田车型分布统计
+  const vehicleCounts: Record<
+    string,
+    { count: number; emergencyCount: number; blockerCount: number; optimizedCount: number }
+  > = {};
+  feedbacks.forEach((f) => {
+    const vModel = f.vehicleModel || '雅阁 (Accord)';
+    if (!vehicleCounts[vModel]) {
+      vehicleCounts[vModel] = { count: 0, emergencyCount: 0, blockerCount: 0, optimizedCount: 0 };
+    }
+    vehicleCounts[vModel].count++;
+    if (!f.isOptimized && (f.isEmergency || f.issueType === '紧急待修复')) {
+      vehicleCounts[vModel].emergencyCount++;
+    }
+    if (f.severity === '阻断') {
+      vehicleCounts[vModel].blockerCount++;
+    }
+    if (f.isOptimized) {
+      vehicleCounts[vModel].optimizedCount++;
+    }
+  });
+
+  const topVehicles = Object.entries(vehicleCounts)
+    .sort((a, b) => b[1].count - a[1].count);
+
+  // 4. 手机机型分布统计
   const deviceCounts: Record<string, { count: number; emergencyCount: number }> = {};
   feedbacks.forEach((f) => {
     const dev = f.deviceModel || '未识别机型';
     if (!deviceCounts[dev]) deviceCounts[dev] = { count: 0, emergencyCount: 0 };
     deviceCounts[dev].count++;
-    if (f.isEmergency || f.issueType === '紧急待修复') {
+    if (!f.isOptimized && (f.isEmergency || f.issueType === '紧急待修复')) {
       deviceCounts[dev].emergencyCount++;
     }
   });
@@ -369,7 +402,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* Middle Section: Distribution Charts & Device Breakdown */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
         {/* Module Distribution (1 col) */}
         <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs">
           <div className="flex items-center justify-between mb-4">
@@ -416,6 +449,74 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </div>
               );
             })}
+          </div>
+        </div>
+
+        {/* 广汽本田车型分布监控 (NEW FEATURE) */}
+        <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-1.5">
+                <Car className="w-4 h-4 text-blue-600" />
+                <h3 className="font-bold text-slate-900 text-sm sm:text-base">广汽本田车型分布</h3>
+              </div>
+              <span className="text-[11px] text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full font-semibold border border-blue-200">
+                11款全系本田
+              </span>
+            </div>
+
+            <p className="text-xs text-slate-500 mb-3">
+              各车款反馈量分布与高危故障监控，点击可直接下钻分类工作台
+            </p>
+
+            <div className="space-y-2 max-h-[290px] overflow-y-auto pr-1">
+              {topVehicles.map(([model, data]) => {
+                const pct = totalCount > 0 ? Math.round((data.count / totalCount) * 100) : 0;
+                return (
+                  <div
+                    key={model}
+                    onClick={() => onNavigateToWorklist({ vehicleModel: model })}
+                    className="p-2 bg-slate-50/70 hover:bg-blue-50/70 rounded-lg cursor-pointer transition-colors border border-slate-100 flex items-center justify-between group"
+                    title={`点击筛选查看 ${model} 的全部反馈`}
+                  >
+                    <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                      <VehicleBadge model={model} size="sm" />
+                      {data.emergencyCount > 0 && (
+                        <span className="px-1.5 py-0.2 text-[10px] font-bold bg-rose-600 text-white rounded flex items-center gap-0.5 animate-pulse">
+                          <Flame className="w-2.5 h-2.5" />
+                          {data.emergencyCount}
+                        </span>
+                      )}
+                      {data.blockerCount > 0 && (
+                        <span className="px-1.5 py-0.2 text-[10px] font-semibold bg-red-100 text-red-700 rounded">
+                          {data.blockerCount} 阻断
+                        </span>
+                      )}
+                      {data.optimizedCount > 0 && (
+                        <span className="px-1.5 py-0.2 text-[10px] font-medium bg-emerald-100 text-emerald-800 rounded flex items-center gap-0.5">
+                          <Check className="w-2.5 h-2.5 text-emerald-600" />
+                          {data.optimizedCount}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-right shrink-0">
+                      <span className="font-bold text-slate-800">{data.count} 条</span>
+                      <span className="text-slate-400 text-[11px] ml-1">({pct}%)</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="mt-3 pt-3 border-t border-slate-100 text-[11px] text-slate-500 flex items-center justify-between">
+            <span>覆盖全系在售 {topVehicles.length} 款车系</span>
+            <span
+              className="text-blue-600 font-medium hover:underline cursor-pointer"
+              onClick={() => onNavigateToWorklist({ vehicleModel: '全部' })}
+            >
+              在分类列表查看全部车型 &rarr;
+            </span>
           </div>
         </div>
 
@@ -571,6 +672,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 );
               })}
             </select>
+
+            {/* GAC Honda Vehicle Model Filter dropdown */}
+            <select
+              value={optVehicleFilter}
+              onChange={(e) => setOptVehicleFilter(e.target.value as any)}
+              className="px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer"
+            >
+              <option value="全部">全部车型</option>
+              {GAC_HONDA_MODELS.map((model) => {
+                const count = optimizedRecent30Days.filter((i) => i.vehicleModel === model).length;
+                return (
+                  <option key={model} value={model}>
+                    {model} ({count})
+                  </option>
+                );
+              })}
+            </select>
           </div>
         </div>
 
@@ -588,6 +706,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       <ModuleBadge module={item.module} size="sm" />
                       <IssueTypeBadge type={item.issueType} />
                       <SeverityBadge severity={item.severity} />
+                      <VehicleBadge model={item.vehicleModel} size="sm" />
                       <DeviceBadge model={item.deviceModel} size="sm" />
                     </div>
                     <span className="px-2 py-0.5 text-[10px] font-bold text-emerald-800 bg-emerald-100 rounded-full border border-emerald-300 flex items-center gap-1">
@@ -720,6 +839,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <p className="mt-2 text-xs text-slate-600 line-clamp-2 leading-relaxed">
                   {cluster.symptoms[0] || cluster.sampleItem.symptomSummary}
                 </p>
+
+                <div className="mt-2.5 flex items-center gap-1.5 flex-wrap">
+                  <VehicleBadge model={cluster.sampleItem.vehicleModel} size="sm" />
+                  <DeviceBadge model={cluster.sampleItem.deviceModel} size="sm" />
+                </div>
               </div>
 
               <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">

@@ -8,6 +8,8 @@ import {
   SentimentLevel,
   FeedbackSource,
   CorrectionRecord,
+  VehicleModel,
+  GAC_HONDA_MODELS,
 } from '../types/feedback';
 import {
   ModuleBadge,
@@ -16,6 +18,7 @@ import {
   SentimentBadge,
   SourceBadge,
   DeviceBadge,
+  VehicleBadge,
   ReviewReasonPill,
 } from './common/Badges';
 import {
@@ -34,6 +37,7 @@ import {
   ChevronRight,
   ExternalLink,
   Smartphone,
+  Car,
   Flame,
   BrainCircuit,
   BookOpen,
@@ -58,6 +62,7 @@ interface WorklistViewProps {
       issueType: IssueType;
       severity: SeverityLevel;
       sentiment: SentimentLevel;
+      vehicleModel?: VehicleModel;
       correctionNote?: string;
     }
   ) => void;
@@ -68,6 +73,7 @@ interface WorklistViewProps {
   corrections?: CorrectionRecord[];
   onToggleFewShotInjection?: (id: string) => void;
   onAddCustomCorrection?: (correction: CorrectionRecord) => void;
+  onToggleOptimized?: (id: string, notes?: string) => void;
 }
 
 export const WorklistView: React.FC<WorklistViewProps> = ({
@@ -85,6 +91,7 @@ export const WorklistView: React.FC<WorklistViewProps> = ({
   corrections = [],
   onToggleFewShotInjection,
   onAddCustomCorrection,
+  onToggleOptimized,
 }) => {
   // Batch selection state
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -93,6 +100,7 @@ export const WorklistView: React.FC<WorklistViewProps> = ({
   const [editIssueType, setEditIssueType] = useState<IssueType>('Bug');
   const [editSeverity, setEditSeverity] = useState<SeverityLevel>('中');
   const [editSentiment, setEditSentiment] = useState<SentimentLevel>('中性');
+  const [editVehicleModel, setEditVehicleModel] = useState<VehicleModel>('雅阁 (Accord)');
   const [correctionNote, setCorrectionNote] = useState('');
   const [savedSuccessMsg, setSavedSuccessMsg] = useState(false);
 
@@ -112,32 +120,46 @@ export const WorklistView: React.FC<WorklistViewProps> = ({
     setTimeout(() => setCopiedPrompt(false), 2000);
   };
 
-  // Filtered list
+  // Filtered list with auto-sink for optimized items
   const filteredFeedbacks = useMemo(() => {
-    return feedbacks.filter((item) => {
-      if (filterState.module !== '全部' && item.module !== filterState.module) return false;
-      if (filterState.issueType !== '全部' && item.issueType !== filterState.issueType) return false;
-      if (filterState.severity !== '全部' && item.severity !== filterState.severity) return false;
-      if (filterState.sentiment !== '全部' && item.sentiment !== filterState.sentiment) return false;
-      if (filterState.source !== '全部' && item.source !== filterState.source) return false;
-      if (filterState.deviceModel && filterState.deviceModel !== '全部' && item.deviceModel !== filterState.deviceModel) return false;
-      if (filterState.onlyEmergency && !item.isEmergency && item.issueType !== '紧急待修复') return false;
-      if (filterState.onlyPriority && !item.inPriorityList) return false;
+    return feedbacks
+      .filter((item) => {
+        if (filterState.module !== '全部' && item.module !== filterState.module) return false;
+        if (filterState.issueType !== '全部' && item.issueType !== filterState.issueType) return false;
+        if (filterState.severity !== '全部' && item.severity !== filterState.severity) return false;
+        if (filterState.sentiment !== '全部' && item.sentiment !== filterState.sentiment) return false;
+        if (filterState.source !== '全部' && item.source !== filterState.source) return false;
+        if (filterState.deviceModel && filterState.deviceModel !== '全部' && item.deviceModel !== filterState.deviceModel) return false;
+        if (filterState.vehicleModel && filterState.vehicleModel !== '全部' && item.vehicleModel !== filterState.vehicleModel) return false;
+        if (filterState.onlyEmergency && !item.isEmergency && item.issueType !== '紧急待修复') return false;
+        if (filterState.onlyPriority && !item.inPriorityList) return false;
 
-      if (filterState.reviewStatus === '待复核' && !(item.needsReview && item.reviewStatus === 'pending')) return false;
-      if (filterState.reviewStatus === '已确认' && item.reviewStatus !== 'confirmed') return false;
-      if (filterState.reviewStatus === '已修正' && item.reviewStatus !== 'modified') return false;
+        if (filterState.reviewStatus === '待复核' && !(item.needsReview && item.reviewStatus === 'pending')) return false;
+        if (filterState.reviewStatus === '已确认' && item.reviewStatus !== 'confirmed') return false;
+        if (filterState.reviewStatus === '已修正' && item.reviewStatus !== 'modified') return false;
 
-      if (filterState.search) {
-        const query = filterState.search.toLowerCase();
-        const inText = item.originalText.toLowerCase().includes(query);
-        const inSymptom = item.symptomSummary.toLowerCase().includes(query);
-        const inReason = item.agentReasoning.toLowerCase().includes(query);
-        if (!inText && !inSymptom && !inReason) return false;
-      }
+        if (filterState.search) {
+          const query = filterState.search.toLowerCase();
+          const inText = item.originalText.toLowerCase().includes(query);
+          const inSymptom = item.symptomSummary.toLowerCase().includes(query);
+          const inReason = item.agentReasoning.toLowerCase().includes(query);
+          const inVehicle = item.vehicleModel?.toLowerCase().includes(query);
+          if (!inText && !inSymptom && !inReason && !inVehicle) return false;
+        }
 
-      return true;
-    });
+        return true;
+      })
+      .sort((a, b) => {
+        // 核心需求：标记已优化后，在列表中自动沉底
+        const aOpt = !!a.isOptimized;
+        const bOpt = !!b.isOptimized;
+        if (aOpt !== bOpt) return aOpt ? 1 : -1;
+        // 未优化项中，紧急待修复/突发紧急置顶
+        const aEmerg = !aOpt && (a.isEmergency || a.issueType === '紧急待修复');
+        const bEmerg = !bOpt && (b.isEmergency || b.issueType === '紧急待修复');
+        if (aEmerg !== bEmerg) return aEmerg ? -1 : 1;
+        return b.timestampMs - a.timestampMs;
+      });
   }, [feedbacks, filterState]);
 
   // Selected item
@@ -155,6 +177,7 @@ export const WorklistView: React.FC<WorklistViewProps> = ({
       setEditIssueType(selectedItem.issueType);
       setEditSeverity(selectedItem.severity);
       setEditSentiment(selectedItem.sentiment);
+      setEditVehicleModel(selectedItem.vehicleModel || '雅阁 (Accord)');
       setCorrectionNote('');
       setSavedSuccessMsg(false);
     }
@@ -181,7 +204,8 @@ export const WorklistView: React.FC<WorklistViewProps> = ({
     editModule !== selectedItem.module ||
     editIssueType !== selectedItem.issueType ||
     editSeverity !== selectedItem.severity ||
-    editSentiment !== selectedItem.sentiment
+    editSentiment !== selectedItem.sentiment ||
+    editVehicleModel !== selectedItem.vehicleModel
   );
 
   const handleSaveCorrection = () => {
@@ -191,6 +215,7 @@ export const WorklistView: React.FC<WorklistViewProps> = ({
       issueType: editIssueType,
       severity: editSeverity,
       sentiment: editSentiment,
+      vehicleModel: editVehicleModel,
       correctionNote,
     });
     setSavedSuccessMsg(true);
@@ -243,6 +268,31 @@ export const WorklistView: React.FC<WorklistViewProps> = ({
               className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white"
             />
           </div>
+        </div>
+
+        {/* 广汽本田车型筛选 (NEW) */}
+        <div>
+          <label className="block text-xs font-semibold text-slate-600 mb-1.5 flex items-center justify-between">
+            <span className="flex items-center gap-1">
+              <Car className="w-3.5 h-3.5 text-blue-600" />
+              广汽本田车型
+            </span>
+            {filterState.vehicleModel && filterState.vehicleModel !== '全部' && (
+              <span className="text-[10px] text-blue-600 font-normal">已选</span>
+            )}
+          </label>
+          <select
+            value={filterState.vehicleModel || '全部'}
+            onChange={(e) => onFilterChange({ vehicleModel: e.target.value as any })}
+            className="w-full px-2.5 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 font-medium"
+          >
+            <option value="全部">全部车型 (全量本田)</option>
+            {GAC_HONDA_MODELS.map((model) => (
+              <option key={model} value={model}>
+                {model}
+              </option>
+            ))}
+          </select>
         </div>
 
         {/* 手机机型筛选 */}
@@ -477,6 +527,33 @@ export const WorklistView: React.FC<WorklistViewProps> = ({
           </div>
         </div>
 
+        {/* Quick status & GAC Honda vehicle summary bar */}
+        <div className="px-4 py-2 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between text-xs text-slate-500 flex-wrap gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-medium text-slate-700">
+              当前展示 <strong className="text-slate-900">{filteredFeedbacks.length}</strong> 条反馈
+            </span>
+            <span className="text-slate-300">|</span>
+            <span className="flex items-center gap-1 text-blue-700 font-medium">
+              <Car className="w-3.5 h-3.5" />
+              广汽本田车型: {filterState.vehicleModel && filterState.vehicleModel !== '全部' ? filterState.vehicleModel : '全系在售车型'}
+            </span>
+            {filteredFeedbacks.filter((f) => f.isOptimized).length > 0 && (
+              <>
+                <span className="text-slate-300">|</span>
+                <span className="text-slate-500 flex items-center gap-1">
+                  <CheckCircle className="w-3 h-3 text-emerald-600" />
+                  已优化闭环 <strong className="text-slate-700">{filteredFeedbacks.filter((f) => f.isOptimized).length}</strong> 项 (已自动沉底弱化)
+                </span>
+              </>
+            )}
+          </div>
+
+          <div className="text-[11px] text-slate-400">
+            排序：突发紧急置顶 &gt; 时间倒序 &gt; 已优化自动沉底弱化
+          </div>
+        </div>
+
         {/* Scrollable Feedback Cards */}
         <div className="divide-y divide-slate-100 overflow-y-auto max-h-[calc(100vh-210px)]">
           {filteredFeedbacks.length === 0 ? (
@@ -494,8 +571,8 @@ export const WorklistView: React.FC<WorklistViewProps> = ({
             filteredFeedbacks.map((item) => {
               const isSelected = selectedItem?.id === item.id;
               const isChecked = selectedIds.includes(item.id);
-
-              const isEmergency = item.isEmergency || item.issueType === '紧急待修复';
+              const isOptimized = !!item.isOptimized;
+              const isEmergency = !isOptimized && (item.isEmergency || item.issueType === '紧急待修复');
 
               return (
                 <div
@@ -505,7 +582,11 @@ export const WorklistView: React.FC<WorklistViewProps> = ({
                     isSelected
                       ? isEmergency
                         ? 'bg-rose-50/60 border-l-4 border-rose-600'
+                        : isOptimized
+                        ? 'bg-slate-100/70 border-l-4 border-slate-400 opacity-80'
                         : 'bg-blue-50/50 border-l-4 border-blue-600'
+                      : isOptimized
+                      ? 'bg-slate-50/60 opacity-65 hover:opacity-90 border-l-4 border-slate-300'
                       : isEmergency
                       ? 'bg-rose-50/20 border-l-4 border-rose-400'
                       : 'border-l-4 border-transparent'
@@ -528,6 +609,7 @@ export const WorklistView: React.FC<WorklistViewProps> = ({
                             突发紧急
                           </span>
                         )}
+                        <VehicleBadge model={item.vehicleModel} />
                         <DeviceBadge model={item.deviceModel} />
                         <SourceBadge source={item.source} />
                         <ModuleBadge module={item.module} />
@@ -546,6 +628,13 @@ export const WorklistView: React.FC<WorklistViewProps> = ({
                           </span>
                         )}
 
+                        {isOptimized && (
+                          <span className="px-1.5 py-0.5 text-[11px] font-medium bg-slate-100 text-slate-600 border border-slate-200 rounded flex items-center gap-1">
+                            <CheckCircle className="w-3 h-3 text-emerald-600" />
+                            已优化
+                          </span>
+                        )}
+
                         {item.inPriorityList && (
                           <span className="px-1.5 py-0.5 text-[11px] font-semibold bg-emerald-100 text-emerald-800 rounded">
                             已入选排期
@@ -558,20 +647,51 @@ export const WorklistView: React.FC<WorklistViewProps> = ({
                       </div>
 
                       {/* Text Excerpt / Symptom */}
-                      <p className="text-xs sm:text-sm text-slate-800 font-medium line-clamp-2 leading-relaxed">
+                      <p className={`text-xs sm:text-sm leading-relaxed line-clamp-2 ${isOptimized ? 'text-slate-400 font-normal line-through-none' : 'text-slate-800 font-medium'}`}>
                         {item.originalText}
                       </p>
 
-                      {/* Agent symptom distillation */}
-                      <div className="mt-2 text-xs text-slate-500 flex items-center justify-between">
-                        <span className="truncate max-w-[85%] text-slate-600">
-                          <span className="font-semibold text-slate-700">症状提炼：</span>
+                      {/* Agent symptom distillation and quick actions */}
+                      <div className="mt-2.5 pt-2 border-t border-slate-100/70 text-xs flex items-center justify-between">
+                        <span className={`truncate max-w-[65%] ${isOptimized ? 'text-slate-400' : 'text-slate-600'}`}>
+                          <span className={`font-semibold ${isOptimized ? 'text-slate-500' : 'text-slate-700'}`}>症状提炼：</span>
                           {item.symptomSummary}
                         </span>
-                        <span className="text-[11px] text-blue-600 font-medium shrink-0 flex items-center gap-0.5">
-                          置信度 {item.confidence}%
-                          <ChevronRight className="w-3.5 h-3.5" />
-                        </span>
+
+                        <div className="flex items-center gap-2.5 shrink-0">
+                          <span className="text-[11px] text-blue-600 font-medium flex items-center gap-0.5">
+                            置信度 {item.confidence}%
+                            <ChevronRight className="w-3 h-3" />
+                          </span>
+
+                          {onToggleOptimized && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onToggleOptimized(item.id);
+                              }}
+                              className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors flex items-center gap-1 cursor-pointer ${
+                                isOptimized
+                                  ? 'text-slate-500 bg-slate-100/90 hover:bg-slate-200 border border-slate-200'
+                                  : 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200'
+                              }`}
+                              title={isOptimized ? '点击撤销已优化' : '点击标记为已优化，清除紧急状态并自动沉底'}
+                            >
+                              {isOptimized ? (
+                                <>
+                                  <RotateCcw className="w-3 h-3 text-slate-400" />
+                                  <span>已优化</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Check className="w-3 h-3 text-emerald-600" />
+                                  <span>标记已优化</span>
+                                </>
+                              )}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -591,35 +711,66 @@ export const WorklistView: React.FC<WorklistViewProps> = ({
               <div>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <span className="text-[11px] font-mono text-slate-400">ID: {selectedItem.id}</span>
-                  <DeviceBadge model={selectedItem.deviceModel} />
-                  {(selectedItem.isEmergency || selectedItem.issueType === '紧急待修复') && (
+                  <VehicleBadge model={selectedItem.vehicleModel} size="sm" />
+                  <DeviceBadge model={selectedItem.deviceModel} size="sm" />
+                  {!selectedItem.isOptimized && (selectedItem.isEmergency || selectedItem.issueType === '紧急待修复') && (
                     <span className="px-1.5 py-0.2 text-[10px] font-bold bg-rose-600 text-white rounded">
                       突发紧急
+                    </span>
+                  )}
+                  {selectedItem.isOptimized && (
+                    <span className="px-1.5 py-0.2 text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200 rounded">
+                      已优化闭环
                     </span>
                   )}
                 </div>
                 <h4 className="font-bold text-slate-900 text-sm mt-0.5">反馈诊断与人工复核</h4>
               </div>
 
-              {/* Priority list toggle button */}
-              <button
-                onClick={() => onTogglePriority(selectedItem.id)}
-                className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 ${
-                  selectedItem.inPriorityList
-                    ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-              >
-                {selectedItem.inPriorityList ? (
-                  <>
-                    <MinusCircle className="w-3.5 h-3.5" /> 移出优先级
-                  </>
-                ) : (
-                  <>
-                    <PlusCircle className="w-3.5 h-3.5" /> 加入优先级
-                  </>
+              <div className="flex items-center gap-1.5">
+                {/* Optimize status toggle button */}
+                {onToggleOptimized && (
+                  <button
+                    onClick={() => onToggleOptimized(selectedItem.id)}
+                    className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 cursor-pointer ${
+                      selectedItem.isOptimized
+                        ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 border border-slate-200'
+                        : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-300'
+                    }`}
+                    title={selectedItem.isOptimized ? '点击撤销已优化' : '点击标记为已优化，清除紧急状态并自动沉底'}
+                  >
+                    {selectedItem.isOptimized ? (
+                      <>
+                        <RotateCcw className="w-3.5 h-3.5 text-slate-500" /> 撤销优化
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle className="w-3.5 h-3.5 text-emerald-600" /> 标记已优化
+                      </>
+                    )}
+                  </button>
                 )}
-              </button>
+
+                {/* Priority list toggle button */}
+                <button
+                  onClick={() => onTogglePriority(selectedItem.id)}
+                  className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1 cursor-pointer ${
+                    selectedItem.inPriorityList
+                      ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  {selectedItem.inPriorityList ? (
+                    <>
+                      <MinusCircle className="w-3.5 h-3.5" /> 移出优先级
+                    </>
+                  ) : (
+                    <>
+                      <PlusCircle className="w-3.5 h-3.5" /> 加入优先级
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
 
             {/* 1. 完整原始反馈 */}
@@ -629,7 +780,7 @@ export const WorklistView: React.FC<WorklistViewProps> = ({
                 {selectedItem.originalText}
               </div>
               <div className="mt-1 flex items-center justify-between text-[11px] text-slate-400">
-                <span>机型: {selectedItem.deviceModel || '未识别'} · 渠道: {selectedItem.source}</span>
+                <span>车型: {selectedItem.vehicleModel} · 机型: {selectedItem.deviceModel || '未识别'} · 渠道: {selectedItem.source}</span>
                 <span>提交时间: {selectedItem.createdAt}</span>
               </div>
             </div>
@@ -742,6 +893,25 @@ export const WorklistView: React.FC<WorklistViewProps> = ({
                     <option value="负面">负面</option>
                     <option value="中性">中性</option>
                     <option value="正面">正面</option>
+                  </select>
+                </div>
+
+                {/* 广汽本田车型 (NEW) */}
+                <div className="col-span-2">
+                  <span className="text-slate-500 mb-1 block flex items-center gap-1">
+                    <Car className="w-3.5 h-3.5 text-blue-600" />
+                    广汽本田车型分类 (支持人工纠偏)
+                  </span>
+                  <select
+                    value={editVehicleModel}
+                    onChange={(e) => setEditVehicleModel(e.target.value as VehicleModel)}
+                    className="w-full px-2 py-1.5 border border-slate-200 rounded-md bg-white font-medium"
+                  >
+                    {GAC_HONDA_MODELS.map((model) => (
+                      <option key={model} value={model}>
+                        {model}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
