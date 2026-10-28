@@ -6,6 +6,7 @@ import {GoogleGenAI, Type} from '@google/genai';
 
 export default defineConfig(() => {
   return {
+    base: '/feedbackboard/',
     plugins: [
       react(),
       tailwindcss(),
